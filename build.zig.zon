@@ -1,0 +1,16 @@
+.{
+    .name = .utils,
+    .version = "0.1.0",
+    .fingerprint = 0x540f5beb10edfb5c,
+    .dependencies = .{
+        .zg = .{
+            .path = "../rg",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "LICENSE",
+        "root.zig",
+    },
+}
