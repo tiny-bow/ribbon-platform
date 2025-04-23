@@ -4,7 +4,7 @@ pub fn build(b: *std.Build) !void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    const zg_dep = b.dependency("zg", .{
+    const rg_dep = b.dependency("rg", .{
         .target = target,
         .optimize = optimize,
     });
@@ -15,9 +15,9 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
-    utils_mod.addImport("zg:GenCatData", zg_dep.module("GenCatData"));
-    utils_mod.addImport("zg:PropsData", zg_dep.module("PropsData"));
-    utils_mod.addImport("zg:CaseData", zg_dep.module("CaseData"));
-    utils_mod.addImport("zg:CaseFold", zg_dep.module("CaseFold"));
-    utils_mod.addImport("zg:DisplayWidth", zg_dep.module("DisplayWidth"));
+    utils_mod.addImport("rg:GenCatData", rg_dep.module("GenCatData"));
+    utils_mod.addImport("rg:PropsData", rg_dep.module("PropsData"));
+    utils_mod.addImport("rg:CaseData", rg_dep.module("CaseData"));
+    utils_mod.addImport("rg:CaseFold", rg_dep.module("CaseFold"));
+    utils_mod.addImport("rg:DisplayWidth", rg_dep.module("DisplayWidth"));
 }

@@ -1137,11 +1137,11 @@ pub const external = struct {
 };
 
 pub const text = struct {
-    const GenCatData = @import("zg:GenCatData");
-    const PropsData = @import("zg:PropsData");
-    const CaseData = @import("zg:CaseData");
-    const CaseFold = @import("zg:CaseFold");
-    const DisplayWidth = @import("zg:DisplayWidth");
+    const GenCatData = @import("rg:GenCatData");
+    const PropsData = @import("rg:PropsData");
+    const CaseData = @import("rg:CaseData");
+    const CaseFold = @import("rg:CaseFold");
+    const DisplayWidth = @import("rg:DisplayWidth");
 
     pub const Char = u21;
 
