@@ -1311,6 +1311,9 @@ pub const text = struct {
     pub fn isAlphabetic(c: Char) bool {
         return getData().props.isAlphabetic(c);
     }
+    pub fn isAlphanumeric(c: Char) bool {
+        return isAlphabetic(c) or isDigit(c);
+    }
     pub fn isIdStart(c: Char) bool {
         return getData().props.isIdStart(c);
     }
@@ -1347,6 +1350,9 @@ pub const text = struct {
     }
     pub fn isAlphabeticStr(str: []const u8) bool {
         return strPredicate(str, isAlphabetic);
+    }
+    pub fn isAlphanumericStr(str: []const u8) bool {
+        return strPredicate(str, isAlphanumeric);
     }
     pub fn isIdStartStr(str: []const u8) bool {
         return strPredicate(str, isIdStart);
