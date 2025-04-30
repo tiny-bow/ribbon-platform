@@ -85,6 +85,11 @@ pub fn Buffer(comptime T: type, comptime MUT: pl.Mutability) type {
         pub const PointerType = MUT.MultiPointerType(T);
         pub const SliceType = MUT.SliceType(T);
 
+        pub const empty = Self{
+            .len = 0,
+            .ptr = 0,
+        };
+
         /// Create a buffer from a slice.
         pub fn fromSlice(slice: SliceType) Self {
             return fromPtr(slice.ptr, slice.len);
