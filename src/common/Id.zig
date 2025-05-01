@@ -110,6 +110,13 @@ pub fn Buffer(comptime T: type, comptime MUT: pl.Mutability) type {
 
         /// Extract both parts of this buffer and construct a slice.
         pub fn asSlice(self: Self) SliceType {
+            if (comptime std.debug.runtime_safety) {
+                // prevent safe mode panic;
+                // it's perfectly fine to have a null slice,
+                // but the self.asPtr call below is not okay.
+                if (self.ptr == 0) return &.{};
+            }
+
             return self.asPtr()[0..self.len];
         }
     };
