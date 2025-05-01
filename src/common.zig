@@ -50,7 +50,7 @@ pub fn PeekableIterator(comptime Iterator: type, comptime Element: type, comptim
         }
 
         pub fn isEof(self: *const Self) bool {
-            return self.peek_cache != null;
+            return self.peek_cache == null;
         }
 
         pub fn peek(self: *Self) Result {
