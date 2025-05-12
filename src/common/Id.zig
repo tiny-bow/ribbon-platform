@@ -97,27 +97,37 @@ pub fn Buffer(comptime T: type, comptime MUT: pl.Mutability) type {
 
         /// Create a buffer from a pointer and length.
         pub fn fromPtr(ptr: PointerType, len: usize) Self {
+            const i = @intFromPtr(ptr);
+            std.debug.assert(i != 0);
+            std.debug.assert(i != 0xaaaa_aaaa_aaaa_aaaa);
             return Self {
                 .len = @intCast(len),
-                .ptr = @intCast(@intFromPtr(ptr)),
+                .ptr = @intCast(i),
             };
         }
 
         /// Extract the 48-bit address part of this buffer.
         pub fn asPtr(self: Self) PointerType {
+            std.debug.assert(self.ptr != 0);
+            if (!std.mem.isAligned(self.ptr, @alignOf(T))) {
+                std.debug.panic("Buffer.asPtr: pointer {x} not aligned to {}", .{ self.ptr, @alignOf(T) });
+            }
             return @ptrFromInt(self.ptr);
         }
 
         /// Extract both parts of this buffer and construct a slice.
         pub fn asSlice(self: Self) SliceType {
-            if (comptime std.debug.runtime_safety) {
-                // prevent safe mode panic;
-                // it's perfectly fine to have a null slice,
-                // but the self.asPtr call below is not okay.
-                if (self.ptr == 0) return &.{};
-            }
+            if (self.ptr == 0 or self.len == 0) return &.{};
 
             return self.asPtr()[0..self.len];
+        }
+
+        pub fn format(self: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            if (comptime @typeInfo(PointerType).pointer.child == u8) {
+                try writer.print("\"{s}\"", .{self.asSlice()});
+            } else {
+                try writer.print("{any}", .{self.asSlice()});
+            }
         }
     };
 }
