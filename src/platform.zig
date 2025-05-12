@@ -853,3 +853,67 @@ pub fn stream(reader: anytype, writer: anytype) !void {
     }
 }
 
+/// See `snapshotTest` for usage.
+pub const SnapshotTestName = union(enum) {
+    none: void,
+    use_log_info: []const u8,
+    use_debug_print: []const u8,
+
+    pub fn use_log(name: []const u8) SnapshotTestName {
+        return SnapshotTestName{ .use_log_info = name };
+    }
+
+    pub fn use_debug(name: []const u8) SnapshotTestName {
+        return SnapshotTestName{ .use_debug_print = name };
+    }
+};
+
+/// Run a suite of input/output tests.
+pub fn snapshotTest(comptime test_name: SnapshotTestName, comptime test_func: fn (input: []const u8, expect: []const u8) anyerror!void, comptime tests: []const struct {input: []const u8, expect: anyerror![]const u8}) !void {
+    var failures = std.ArrayList(usize).init(std.heap.page_allocator);
+    defer failures.deinit();
+
+    testing: for (tests, 0..) |t, i| {
+        log.info("test {}/{}", .{i, tests.len});
+        const input = t.input;
+
+        if (t.expect) |expect_str| {
+            test_func(input, expect_str) catch |err| {
+                log.err("input {s} failed: {}", .{input, err});
+                failures.append(i) catch unreachable;
+                continue :testing;
+            };
+
+            log.info("input {s} succeeded: {s}", .{input, expect_str});
+        } else |expect_err| {
+            std.debug.assert(expect_err != error.TestFailure);
+
+            const maybe_err = test_func(input, "");
+            if (maybe_err) |_| { // void
+                log.err("input {s} succeeded; but expected {}", .{input, expect_err});
+                failures.append(i) catch unreachable;
+            } else |err| {
+                if (err == error.TestFailure or err == error.TestExpectedEqual) {
+                    log.err("input {s} succeeded, but the output was wrong; expected {}", .{input, expect_err});
+                    failures.append(i) catch unreachable;
+                } else if (expect_err != err) {
+                    log.err("input {s} failed: {}; but expected {}", .{input, err, expect_err});
+                    failures.append(i) catch unreachable;
+                } else {
+                    log.info("input {s} failed as expected", .{input});
+                }
+            }
+        }
+    }
+
+    if (failures.items.len > 0) {
+        log.err("Failed {}/{} tests: {any}", .{failures.items.len, tests.len, failures.items});
+        return error.TestFailed;
+    } else {
+        switch (test_name) {
+            .none => {},
+            .use_log_info => log.info("All snapshot tests for {s} passed", .{test_name.use_log_info}),
+            .use_debug_print => std.debug.print("All snapshot tests for {s} passed", .{test_name.use_debug_print}),
+        }
+    }
+}
