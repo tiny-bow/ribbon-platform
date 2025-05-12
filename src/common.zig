@@ -67,14 +67,18 @@ pub fn PeekableIterator(comptime Iterator: type, comptime Element: type, comptim
 
         pub fn next(self: *Self) Result {
             if (self.peek_cache) |v| {
-                self.peek_cache = null;
-
-                _ = if (comptime mode == .error_type) try self.peek() else self.peek();
+                if (comptime mode == .error_type) try self.advance() else self.advance();
 
                 return v;
             }
 
             return null;
+        }
+
+        pub fn advance(self: *Self) (if (mode == .error_type) (mode.error_type!void) else void) {
+            self.peek_cache = null;
+
+            _ = if (comptime mode == .error_type) try self.peek() else self.peek();
         }
     };
 }
