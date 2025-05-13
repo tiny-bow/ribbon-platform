@@ -917,3 +917,40 @@ pub fn snapshotTest(comptime test_name: SnapshotTestName, comptime test_func: fn
         }
     }
 }
+
+
+
+
+
+pub fn Visitor(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        allocator: std.mem.Allocator,
+        visited_values: UniqueReprSet(T, 80),
+
+        pub fn init(allocator: std.mem.Allocator) error{OutOfMemory}!Self {
+            var self = Self{
+                .allocator = allocator,
+                .visited_values = .empty,
+            };
+
+            try self.visited_values.ensureTotalCapacity(allocator, 256);
+
+            return self;
+        }
+
+        pub fn deinit(self: *Self) void {
+            self.visited_values.deinit(self.allocator);
+        }
+
+        pub fn clearVisited(self: *Self) void {
+            self.visited_values.clearRetainingCapacity();
+        }
+
+        pub fn visit(self: *Self, value: T) !bool {
+            const value_gop = try self.visited_values.getOrPut(self.allocator, value);
+            return value_gop.found_existing;
+        }
+    };
+}
