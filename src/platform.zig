@@ -140,6 +140,7 @@ pub const VirtualMemory = []const align(std.heap.page_size_min) u8;
 pub const MutVirtualMemory = []align(std.heap.page_size_min) u8;
 
 pub const ArrayList = std.ArrayListUnmanaged;
+pub const MultiArrayList = std.MultiArrayList;
 
 pub const ArrayMap = std.ArrayHashMapUnmanaged;
 
@@ -167,6 +168,20 @@ pub fn HashSet(comptime T: type, comptime Ctx: type, comptime LOAD_PERCENTAGE: u
 ///
 /// Default initialization of this struct is deprecated; use `.empty` instead.
 pub const StringMap = std.StringHashMapUnmanaged;
+
+/// String map type; see `ArrayMap` for detailed docs.
+///
+/// Default initialization of this struct is deprecated; use `.empty` instead.
+pub const StringArrayMap = std.StringArrayHashMapUnmanaged;
+
+/// String map type. The values are void.
+///
+/// Key memory is managed by the caller. Keys will not automatically be freed.
+///
+/// Default initialization of this struct is deprecated; use `.empty` instead.
+///
+/// See `ArraySet` for detailed docs.
+pub const StringArraySet = std.StringArrayHashMapUnmanaged(void);
 
 /// String map type. The values are void.
 ///
@@ -222,11 +237,11 @@ pub fn UniqueReprSet(comptime T: type, LOAD_PERCENTAGE: u64) type {
 }
 
 pub fn UniqueReprArrayMap(comptime K: type, comptime V: type, comptime RETAIN_HASH: bool) type {
-    return ArrayMap(K, V, UniqueReprHashContext64(K), RETAIN_HASH);
+    return ArrayMap(K, V, UniqueReprHashContext32(K), RETAIN_HASH);
 }
 
 pub fn UniqueReprArraySet(comptime T: type, comptime RETAIN_HASH: bool) type {
-    return ArraySet(T, UniqueReprHashContext64(T), RETAIN_HASH);
+    return ArraySet(T, UniqueReprHashContext32(T), RETAIN_HASH);
 }
 
 /// Provides a 32-bit hash context for types with unique representation. See `std.meta.hasUniqueRepresentation`.
@@ -235,12 +250,12 @@ pub fn UniqueReprHashContext32(comptime T: type) type {
         @compileError("UniqueReprHashContext32: type `" ++ @typeName(T) ++ "` must have unique representation");
     }
     return struct {
-        pub fn eql(_: @This(), a: T, b: T) bool {
+        pub fn eql(_: @This(), a: T, b: T, _: usize) bool {
             return a == b;
         }
 
         pub fn hash(_: @This(), value: T) u32 {
-            return hash32(@as([*]u8, @ptrCast(&value))[0..@sizeOf(T)]);
+            return hash32(@as([*]const u8, @ptrCast(&value))[0..@sizeOf(T)]);
         }
     };
 }
@@ -259,6 +274,55 @@ pub fn UniqueReprHashContext64(comptime T: type) type {
             return hash64(@as([*]const u8, @ptrCast(&value))[0..@sizeOf(T)]);
         }
     };
+}
+
+
+
+/// Returns an enum with a variant named after each field of `T`.
+pub fn FieldEnumOfSize(comptime T: type, comptime bit_size: comptime_int) type {
+    const field_infos = std.meta.fields(T);
+
+    const I = std.meta.Int(.unsigned, bit_size);
+
+    if (field_infos.len == 0) {
+        return @Type(.{
+            .@"enum" = .{
+                .tag_type = I,
+                .fields = &.{},
+                .decls = &.{},
+                .is_exhaustive = true,
+            },
+        });
+    }
+
+    if (@typeInfo(T) == .@"union") {
+        if (@typeInfo(T).@"union".tag_type) |tag_type| {
+            for (std.enums.values(tag_type), 0..) |v, i| {
+                if (@intFromEnum(v) != i) break; // enum values not consecutive
+                if (!std.mem.eql(u8, @tagName(v), field_infos[i].name)) break; // fields out of order
+            } else {
+                return tag_type;
+            }
+        }
+    }
+
+    var enumFields: [field_infos.len]std.builtin.Type.EnumField = undefined;
+    var decls = [_]std.builtin.Type.Declaration{};
+    inline for (field_infos, 0..) |field, i| {
+        enumFields[i] = .{
+            .name = field.name ++ "",
+            .value = i,
+        };
+    }
+
+    return @Type(.{
+        .@"enum" = .{
+            .tag_type = I,
+            .fields = &enumFields,
+            .decls = &decls,
+            .is_exhaustive = true,
+        },
+    });
 }
 
 
@@ -551,7 +615,7 @@ pub fn stackTrace(allocator: std.mem.Allocator, traceAddr: usize, numFrames: ?us
 }
 
 /// Represents an enum literal.
-pub const EnumLiteral = @Type(.enum_literal);
+pub const EnumLiteral: type = @Type(.enum_literal);
 
 /// Represents a to-do item.
 pub const TODO = *const anyopaque;
@@ -918,7 +982,88 @@ pub fn snapshotTest(comptime test_name: SnapshotTestName, comptime test_func: fn
     }
 }
 
+pub fn UniqueReprBiMap(comptime A: type, comptime B: type, comptime style: enum { array, bucket }) type {
+    return struct {
+        const Self = @This();
 
+        fn Map(comptime X: type, comptime Y: type) type {
+            return if (style == .array) UniqueReprArrayMap(X, Y, false) else UniqueReprMap(X, Y, 80);
+        }
+
+        a_to_b: Map(A, B),
+        b_to_a: Map(B, A),
+
+        pub const empty = Self{
+            .a_to_b = .empty,
+            .b_to_a = .empty,
+        };
+
+        pub fn init(allocator: std.mem.Allocator) !*Self {
+            const self = try allocator.create(Self);
+            errdefer allocator.destroy(self);
+
+            self.* = Self {
+                .a_to_b = Map(A, B, 80),
+                .b_to_a = Map(B, A, 80),
+            };
+            errdefer self.deinit(allocator);
+
+            return self;
+        }
+
+        pub fn ensureTotalCapacity(self: *Self, allocator: std.mem.Allocator, capacity: usize) !void {
+            try self.a_to_b.ensureTotalCapacity(allocator, @intCast(capacity));
+            try self.b_to_a.ensureTotalCapacity(allocator, @intCast(capacity));
+        }
+
+        pub fn ensureUnusedCapacity(self: *Self, allocator: std.mem.Allocator, capacity: usize) !void {
+            try self.a_to_b.ensureUnusedCapacity(allocator, @intCast(capacity));
+            try self.b_to_a.ensureUnusedCapacity(allocator, @intCast(capacity));
+        }
+
+        pub fn put(self: *Self, allocator: std.mem.Allocator, a: A, b: B) !void {
+            try self.a_to_b.put(allocator, a, b);
+            try self.b_to_a.put(allocator, b, a);
+        }
+
+        pub fn get_b(self: *Self, allocator: std.mem.Allocator, a: A) ?B {
+            return self.a_to_b.get(allocator, a);
+        }
+
+        pub fn get_a(self: *Self, allocator: std.mem.Allocator, b: B) ?A {
+            return self.b_to_a.get(allocator, b);
+        }
+
+        pub fn iterator(self: *Self) Iterator {
+            return .{
+                .inner = self.a_to_b.iterator(),
+            };
+        }
+
+        pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+            self.a_to_b.deinit(allocator);
+            self.b_to_a.deinit(allocator);
+        }
+
+        pub const Iterator = struct {
+            inner: Map(A, B).Iterator,
+
+            pub const Entry = struct {
+                a: A,
+                b: B,
+            };
+
+            pub fn next(self: *Iterator) ?Entry {
+                const elem = self.inner.next() orelse return null;
+
+                return Entry {
+                    .a = elem.key_ptr.*,
+                    .b = elem.value_ptr.*,
+                };
+            }
+        };
+    };
+}
 
 
 
