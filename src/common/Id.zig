@@ -12,6 +12,12 @@ test {
 /// The maximum integer that can be converted to an `Id`.
 pub const MAX_INT = std.math.maxInt(u16) - 1;
 
+/// The default Id type constructor, 16 bits.
+/// This is used because we can pack 16 bits into a pointer on most architectures, among other things.
+pub fn of(comptime T: type) type {
+    return ofSize(T, 16);
+}
+
 /// Identity values used to create indirect references.
 ///
 /// Associated type may be accessed with the `Value` constant.
@@ -20,8 +26,9 @@ pub const MAX_INT = std.math.maxInt(u16) - 1;
 /// incrementing integers when creating enums, and decrementing enums when creating integers.
 /// Therefore, despite the null id being zero, we can still index into arrays simply by calling `.toInt()`.
 /// Additionally, "null dereference" will be caught by safe-mode checks due to overflow.
-pub fn of(comptime T: type) type {
-    return enum(u16) {
+pub fn ofSize(comptime T: type, comptime bits: comptime_int) type {
+    const I = std.meta.Int(.unsigned, bits);
+    return enum(I) {
         const Self = @This();
 
         /// The value type this ID binds.
@@ -31,16 +38,16 @@ pub fn of(comptime T: type) type {
         _,
 
         /// Convert between `Id` types.
-        pub fn cast(self: Self, comptime U: type) Id.of(U) {
+        pub fn cast(self: Self, comptime U: type) Id.ofSize(U, bits) {
             return @enumFromInt(@intFromEnum(self));
         }
 
-        /// Convert this id to a 16-bit integer.
-        pub fn toInt(self: Self) u16 {
+        /// Convert this id to an integer.
+        pub fn toInt(self: Self) I {
             return @intFromEnum(self) - 1;
         }
 
-        /// Convert a 16-bit integer to an `Id`.
+        /// Convert an integer to an `Id`.
         pub fn fromInt(i: anytype) Self {
             return @enumFromInt(i + 1);
         }
@@ -59,6 +66,77 @@ pub fn of(comptime T: type) type {
                 return null;
             }
             return self;
+        }
+    };
+}
+
+
+pub fn Table(comptime T: type, comptime id_size: comptime_int) type {
+    return struct {
+        const Self = @This();
+        pub const Id = ofSize(T, id_size);
+
+        data: pl.MultiArrayList(T) = .empty,
+
+        pub fn initCapacity(allocator: std.mem.Allocator, capacity: usize) !Self {
+            var self = Self.empty;
+
+            try self.data.ensureTotalCapacity(allocator, capacity);
+            errdefer self.data.deinit(allocator);
+
+            return self;
+        }
+
+        pub fn ensureCapacity(self: *Self, allocator: std.mem.Allocator, capacity: usize) !void {
+            try self.data.ensureUnusedCapacity(allocator, capacity);
+        }
+
+        pub fn deinitData(self: *Self, allocator: std.mem.Allocator) void {
+            if (comptime pl.hasDecl(T, .deinit)) {
+                for (0..self.data.len) |i| {
+                    var a = self.data.get(i);
+                    a.deinit(allocator);
+                }
+            }
+
+            self.data.len = 0;
+        }
+
+        pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+            self.deinitData(allocator);
+            self.data.deinit(allocator);
+        }
+
+        pub fn clear(self: *Self) void {
+            self.data.clearRetainingCapacity();
+        }
+
+        pub fn rowCount(self: *Self) usize {
+            return self.data.len;
+        }
+
+        pub fn column(self: *Self, comptime name: std.meta.FieldEnum(T)) []std.meta.FieldType(T, name) {
+            return self.data.items(name);
+        }
+
+        pub fn cell(self: *Self, id: Self.Id, comptime name: std.meta.FieldEnum(T)) *std.meta.FieldType(T, name) {
+            return &self.data.items(name)[id.toInt()];
+        }
+
+        pub fn getRow(self: *Self, id: Self.Id) ?T {
+            if (id == .null) return null;
+
+            return self.data.get(id.toInt());
+        }
+
+        pub fn addRow(self: *Self, allocator: std.mem.Allocator, data: T) !Self.Id {
+            std.debug.assert(self.data.len <= std.math.maxInt(std.meta.Tag(Self.Id)));
+
+            const id = Self.Id.fromInt(self.data.len);
+
+            try self.data.append(allocator, data);
+
+            return id;
         }
     };
 }
@@ -82,8 +160,9 @@ pub fn Buffer(comptime T: type, comptime MUT: pl.Mutability) type {
         len: u16 = 0,
         ptr: u48 = 0,
 
-        pub const PointerType = MUT.MultiPointerType(T);
-        pub const SliceType = MUT.SliceType(T);
+        pub const PointerType: type = MUT.MultiPointerType(T);
+        pub const SliceType: type = MUT.SliceType(T);
+        pub const ValueType = T;
 
         pub const empty = Self{
             .len = 0,
@@ -131,6 +210,7 @@ pub fn Buffer(comptime T: type, comptime MUT: pl.Mutability) type {
         }
     };
 }
+
 
 /// `HashMap` specialized to types compatible with `IdHashCtx`.
 ///
