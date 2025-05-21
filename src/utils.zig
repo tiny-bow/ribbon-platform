@@ -4292,7 +4292,7 @@ pub const types = struct {
                     fullFields[fullIndex] = std.builtin.Type.StructField{
                         .name = if (tuple) std.fmt.comptimePrint("{}", .{fullIndex}) else structField.name,
                         .type = structField.type,
-                        .default_value = structField.default_value,
+                        .default_value_ptr = structField.default_value_ptr,
                         .is_comptime = false,
                         .alignment = @alignOf(structField.type),
                     };

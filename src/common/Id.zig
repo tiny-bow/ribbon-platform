@@ -67,6 +67,14 @@ pub fn ofSize(comptime T: type, comptime bits: comptime_int) type {
             }
             return self;
         }
+
+        pub fn format(self: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            if (self == .null) {
+                try writer.writeAll(@typeName(T) ++ ":null");
+            } else {
+                try writer.print(@typeName(T) ++ ":{d}", .{self.toInt()});
+            }
+        }
     };
 }
 

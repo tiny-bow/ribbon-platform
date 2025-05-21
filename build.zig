@@ -102,6 +102,12 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
+    const SlotMap_mod = b.addModule("SlotMap", .{
+        .root_source_file = b.path("src/common/SlotMap.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
     const VirtualWriter_mod = b.addModule("VirtualWriter", .{
         .root_source_file = b.path("src/common/VirtualWriter.zig"),
         .target = target,
@@ -117,6 +123,7 @@ pub fn build(b: *std.Build) !void {
     common_mod.addImport("Id", Id_mod);
     common_mod.addImport("Interner", Interner_mod);
     common_mod.addImport("Stack", Stack_mod);
+    common_mod.addImport("SlotMap", SlotMap_mod);
     common_mod.addImport("VirtualWriter", VirtualWriter_mod);
 
 
@@ -130,6 +137,7 @@ pub fn build(b: *std.Build) !void {
     platform_mod.addOptions("build_info", build_info_opts);
 
     Stack_mod.addImport("platform", platform_mod);
+    SlotMap_mod.addImport("platform", platform_mod);
 
     VirtualWriter_mod.addImport("platform", platform_mod);
 }

@@ -762,6 +762,16 @@ pub inline fn DerefFieldType(comptime T: type, comptime name: EnumLiteral) type 
     }
 }
 
+pub inline fn FieldType(comptime T: type, comptime name: EnumLiteral) type {
+    comptime {
+        if (hasField(T, name)) {
+            return @FieldType(T, @tagName(name));
+        } else {
+            @compileError("DerefFieldType: " ++ @typeName(T) ++ " has no field " ++ @tagName(name));
+        }
+    }
+}
+
 /// Determines whether a type has a field, directly or via a pointer.
 pub inline fn hasDerefField(comptime T: type, comptime name: EnumLiteral) bool {
     comptime return hasField(T, name) or pointerField(T, name);
@@ -982,7 +992,96 @@ pub fn snapshotTest(comptime test_name: SnapshotTestName, comptime test_func: fn
     }
 }
 
-pub fn UniqueReprBiMap(comptime A: type, comptime B: type, comptime style: enum { array, bucket }) type {
+pub const MapStyle = enum {
+    array,
+    bucket,
+};
+
+pub inline fn StringBiMap(comptime B: type, comptime B_Ctx: type, comptime style: MapStyle) type {
+    comptime return BiMap([]const u8, B, if (style == .array) std.array_hash_map.StringContext else std.hash_map.StringContext, B_Ctx, style);
+}
+
+pub inline fn UniqueReprStringBiMap(comptime B: type, comptime style: MapStyle) type {
+    comptime return StringBiMap(B, if (style == .array) UniqueReprHashContext32(B) else UniqueReprHashContext64(B), style);
+}
+
+pub inline fn BiMap(comptime A: type, comptime B: type, comptime A_Ctx: type, comptime B_Ctx: type, comptime style: MapStyle) type {
+    comptime return struct {
+        const Self = @This();
+
+        fn Map(comptime X: type, comptime Y: type, comptime C: type) type {
+            return if (style == .array) ArrayMap(X, Y, C, false) else HashMap(X, Y, C, 80);
+        }
+
+        a_to_b: Map(A, B, A_Ctx),
+        b_to_a: Map(B, A, B_Ctx),
+
+        pub const empty = Self{
+            .a_to_b = .empty,
+            .b_to_a = .empty,
+        };
+
+        pub fn count(self: *Self) usize {
+            const out = self.a_to_b.count();
+            std.debug.assert(out == self.b_to_a.count());
+            return out;
+        }
+
+        pub fn ensureTotalCapacity(self: *Self, allocator: std.mem.Allocator, capacity: usize) !void {
+            try self.a_to_b.ensureTotalCapacity(allocator, @intCast(capacity));
+            try self.b_to_a.ensureTotalCapacity(allocator, @intCast(capacity));
+        }
+
+        pub fn ensureUnusedCapacity(self: *Self, allocator: std.mem.Allocator, capacity: usize) !void {
+            try self.a_to_b.ensureUnusedCapacity(allocator, @intCast(capacity));
+            try self.b_to_a.ensureUnusedCapacity(allocator, @intCast(capacity));
+        }
+
+        pub fn put(self: *Self, allocator: std.mem.Allocator, a: A, b: B) !void {
+            try self.a_to_b.put(allocator, a, b);
+            try self.b_to_a.put(allocator, b, a);
+        }
+
+        pub fn get_b(self: *Self, a: A) ?B {
+            return self.a_to_b.get(a);
+        }
+
+        pub fn get_a(self: *Self, b: B) ?A {
+            return self.b_to_a.get(b);
+        }
+
+        pub fn iterator(self: *Self) Iterator {
+            return .{
+                .inner = self.a_to_b.iterator(),
+            };
+        }
+
+        pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+            self.a_to_b.deinit(allocator);
+            self.b_to_a.deinit(allocator);
+        }
+
+        pub const Iterator = struct {
+            inner: Map(A, B).Iterator,
+
+            pub const Entry = struct {
+                a: A,
+                b: B,
+            };
+
+            pub fn next(self: *Iterator) ?Entry {
+                const elem = self.inner.next() orelse return null;
+
+                return Entry {
+                    .a = elem.key_ptr.*,
+                    .b = elem.value_ptr.*,
+                };
+            }
+        };
+    };
+}
+
+pub fn UniqueReprBiMap(comptime A: type, comptime B: type, comptime style: MapStyle) type {
     return struct {
         const Self = @This();
 
@@ -1011,6 +1110,12 @@ pub fn UniqueReprBiMap(comptime A: type, comptime B: type, comptime style: enum 
             return self;
         }
 
+        pub fn count(self: *Self) usize {
+            const out = self.a_to_b.count();
+            std.debug.assert(out == self.b_to_a.count());
+            return out;
+        }
+
         pub fn ensureTotalCapacity(self: *Self, allocator: std.mem.Allocator, capacity: usize) !void {
             try self.a_to_b.ensureTotalCapacity(allocator, @intCast(capacity));
             try self.b_to_a.ensureTotalCapacity(allocator, @intCast(capacity));
@@ -1026,12 +1131,24 @@ pub fn UniqueReprBiMap(comptime A: type, comptime B: type, comptime style: enum 
             try self.b_to_a.put(allocator, b, a);
         }
 
-        pub fn get_b(self: *Self, allocator: std.mem.Allocator, a: A) ?B {
-            return self.a_to_b.get(allocator, a);
+        pub fn remove_a(self: *Self, a: A) void {
+            const b = self.a_to_b.get(a) orelse return;
+            _ = self.a_to_b.remove(a);
+            _ = self.b_to_a.remove(b);
         }
 
-        pub fn get_a(self: *Self, allocator: std.mem.Allocator, b: B) ?A {
-            return self.b_to_a.get(allocator, b);
+        pub fn remove_b(self: *Self, b: B) void {
+            const a = self.b_to_a.get(b) orelse return;
+            _ = self.b_to_a.remove(b);
+            _ = self.a_to_b.remove(a);
+        }
+
+        pub fn get_b(self: *Self, a: A) ?B {
+            return self.a_to_b.get(a);
+        }
+
+        pub fn get_a(self: *Self, b: B) ?A {
+            return self.b_to_a.get(b);
         }
 
         pub fn iterator(self: *Self) Iterator {

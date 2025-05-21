@@ -8,6 +8,7 @@ pub const Id = @import("Id");
 pub const Interner = @import("Interner");
 pub const Stack = @import("Stack");
 pub const VirtualWriter = @import("VirtualWriter");
+pub const SlotMap = @import("SlotMap");
 
 
 pub const PeekableIteratorMode = union(enum) {
