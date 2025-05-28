@@ -1037,6 +1037,11 @@ pub inline fn BiMap(comptime A: type, comptime B: type, comptime A_Ctx: type, co
             try self.b_to_a.ensureUnusedCapacity(allocator, @intCast(capacity));
         }
 
+        pub fn clearRetainingCapacity(self: *Self) void {
+            self.a_to_b.clearRetainingCapacity();
+            self.b_to_a.clearRetainingCapacity();
+        }
+
         pub fn put(self: *Self, allocator: std.mem.Allocator, a: A, b: B) !void {
             try self.a_to_b.put(allocator, a, b);
             try self.b_to_a.put(allocator, b, a);
@@ -1062,7 +1067,7 @@ pub inline fn BiMap(comptime A: type, comptime B: type, comptime A_Ctx: type, co
         }
 
         pub const Iterator = struct {
-            inner: Map(A, B).Iterator,
+            inner: Map(A, B, A_Ctx).Iterator,
 
             pub const Entry = struct {
                 a: A,
@@ -1124,6 +1129,11 @@ pub fn UniqueReprBiMap(comptime A: type, comptime B: type, comptime style: MapSt
         pub fn ensureUnusedCapacity(self: *Self, allocator: std.mem.Allocator, capacity: usize) !void {
             try self.a_to_b.ensureUnusedCapacity(allocator, @intCast(capacity));
             try self.b_to_a.ensureUnusedCapacity(allocator, @intCast(capacity));
+        }
+
+        pub fn clearRetainingCapacity(self: *Self) void {
+            self.a_to_b.clearRetainingCapacity();
+            self.b_to_a.clearRetainingCapacity();
         }
 
         pub fn put(self: *Self, allocator: std.mem.Allocator, a: A, b: B) !void {

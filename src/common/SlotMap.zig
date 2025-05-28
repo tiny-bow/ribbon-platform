@@ -4,39 +4,65 @@ const std = @import("std");
 const log = std.log.scoped(.slot_map);
 
 
-pub fn MultiArray(comptime T: type, comptime index_bits: comptime_int, comptime generation_bits: comptime_int) type {
-    if (@typeInfo(T) != .@"struct") {
-        @compileError("SlotMap.MultiArray requires a struct type; each field will be stored in a separate array."
-            ++ "If you want to store a single " ++ @typeName(T) ++ ", use SlotMap.new instead.");
-    }
 
+pub fn Generation(comptime generation_bits: comptime_int) type {
+    return enum(std.meta.Int(.unsigned, generation_bits)) {
+        invalid = 0,
+        _,
+    };
+}
+
+pub fn Ref(comptime index_bits: comptime_int, comptime generation_bits: comptime_int) type {
+    return packed struct {
+        index: std.meta.Int(.unsigned, index_bits),
+        generation: Generation(generation_bits),
+
+        pub const invalid = @This() {
+            .index = 0,
+            .generation = .invalid,
+        };
+    };
+}
+
+pub fn Iterator(comptime index_bits: comptime_int, comptime generation_bits: comptime_int) type {
+    return packed struct {
+        value_to_slot: [*]std.meta.Int(.unsigned, index_bits),
+        generation: [*]Generation(generation_bits),
+        len: std.meta.Int(.unsigned, index_bits),
+        index: std.meta.Int(.unsigned, index_bits),
+
+        pub fn next(self: *@This()) ?Ref(index_bits, generation_bits) {
+            if (self.index >= self.len) return null;
+
+            const value_index = self.index;
+            const slot_index = self.value_to_slot[value_index];
+            const generation = self.generation[slot_index];
+
+            self.index += 1;
+
+            return .{
+                .index = slot_index,
+                .generation = generation,
+            };
+        }
+    };
+}
+
+pub fn MultiArray(comptime T: type, comptime index_bits: comptime_int, comptime generation_bits: comptime_int) type {
     return struct {
         const I: type = std.meta.Int(.unsigned, index_bits);
         const S: type = I;
         const V: type = I;
+        pub const Ref: type = SlotMap.Ref(index_bits, generation_bits);
+        pub const Generation: type = SlotMap.Generation(generation_bits);
         const Self = @This();
-
-        pub const Ref = packed struct {
-            index: V,
-            generation: Generation,
-
-            pub const invalid = @This() {
-                .index = 0,
-                .generation = .invalid,
-            };
-        };
-
-        pub const Generation = enum(std.meta.Int(.unsigned, generation_bits)) {
-            invalid = 0,
-            _,
-        };
 
         const Data = data: {
             const basics = struct {
                 __slot_to_value: V,
                 __value_to_slot: S,
                 __freelist_next: ?S,
-                __generation: Generation,
+                __generation: Self.Generation,
             };
 
             const basic_fields = std.meta.fieldNames(basics);
@@ -126,7 +152,7 @@ pub fn MultiArray(comptime T: type, comptime index_bits: comptime_int, comptime 
             return &self.data.items(.__freelist_next)[slot_index];
         }
 
-        pub fn __generation(self: *const Self, value_index: V) *Generation {
+        pub fn __generation(self: *const Self, value_index: V) *Self.Generation {
             return &self.data.items(.__generation)[value_index];
         }
 
@@ -174,13 +200,13 @@ pub fn MultiArray(comptime T: type, comptime index_bits: comptime_int, comptime 
             return self.data.items(comptime @field(std.meta.FieldEnum(Data), @tagName(field_name)));
         }
 
-        pub fn create(self: *Self, allocator: std.mem.Allocator) !struct { Ref, V } {
+        pub fn create(self: *Self, allocator: std.mem.Allocator) !struct { Self.Ref, V } {
             const slot_index =
                 if (self.popFreelist()) |free_slot| free_slot
                 else try self.addOne(allocator);
 
             return .{
-                Ref { .index = slot_index, .generation = @enumFromInt(1) },
+                Self.Ref { .index = slot_index, .generation = @enumFromInt(1) },
                 self.__slotToValue(slot_index).*,
             };
         }
@@ -190,14 +216,14 @@ pub fn MultiArray(comptime T: type, comptime index_bits: comptime_int, comptime 
 
             const destroyed_slot_index = ref.index;
             const destroyed_value_index = self.__slotToValue(destroyed_slot_index).*;
-            const generation_ptr = self.__generation(destroyed_value_index);
+            const generation_ptr = self.__generation(destroyed_slot_index);
 
             if (generation_ptr.* != ref.generation) {
                 log.warn("double free of slot index {} in SlotMap of type {s}", .{destroyed_slot_index, @typeName(T)});
                 return;
             }
 
-            self.incrementGeneration(destroyed_value_index);
+            self.incrementGeneration(destroyed_slot_index);
 
             const last_value_slot_index = self.__valueToSlot(destroyed_value_index).*;
 
@@ -218,10 +244,10 @@ pub fn MultiArray(comptime T: type, comptime index_bits: comptime_int, comptime 
             }
         }
 
-        pub fn get(self: *Self, ref: Ref) ?*T {
+        pub fn get(self: *Self, ref: Self.Ref) ?*T {
             const slot_index = ref.index;
             const value_index_ptr = self.__slotToValue(slot_index);
-            const generation_ptr = self.__generation(value_index_ptr.*);
+            const generation_ptr = self.__generation(slot_index);
 
             if (generation_ptr.* != ref.generation) {
                 log.warn("invalid access of slot index {} in SlotMap of type {s}", .{slot_index, @typeName(T)});
@@ -247,7 +273,7 @@ pub fn MultiArray(comptime T: type, comptime index_bits: comptime_int, comptime 
             }
         }
 
-        pub fn resolveIndex(self: *Self, ref: Ref) ?V {
+        pub fn resolveIndex(self: *Self, ref: Self.Ref) ?V {
             const slot_index = ref.index;
             const value_index_ptr = self.__slotToValue(slot_index);
             const generation_ptr = self.__generation(value_index_ptr.*);
@@ -258,6 +284,17 @@ pub fn MultiArray(comptime T: type, comptime index_bits: comptime_int, comptime 
             }
 
             return value_index_ptr.*;
+        }
+
+        /// Get an iterator over all Refs into the SlotMap.
+        pub fn iterator(self: *const Self) Iterator(index_bits, generation_bits) {
+            const slots = self.data.items(.__value_to_slot);
+            return .{
+                .value_to_slot = slots.ptr,
+                .generation = self.data.items(.__generation).ptr,
+                .index = 0,
+                .len = @intCast(slots.len),
+            };
         }
     };
 }
