@@ -52,7 +52,7 @@ pub fn ofSize(comptime T: type, comptime bits: comptime_int) type {
             return @enumFromInt(i + 1);
         }
 
-        /// Takes a copy of an `Id`, performings a mutating increment on itself, and returns the copy.
+        /// Takes a copy of an `Id`, performs a mutating increment on itself, and returns the copy.
         pub fn next(self: *Self) Self {
             const old = self.*;
             self.* = @enumFromInt(@intFromEnum(old) + 1);
