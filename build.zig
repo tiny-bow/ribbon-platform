@@ -35,7 +35,6 @@ pub fn build(b: *std.Build) !void {
     }
     build_info_opts.addOption(std.SemanticVersion, "version", version);
 
-
     const rg_dep = b.dependency("rg", .{
         .target = target,
         .optimize = optimize,
@@ -52,7 +51,6 @@ pub fn build(b: *std.Build) !void {
     utils_mod.addImport("rg:CaseData", rg_dep.module("CaseData"));
     utils_mod.addImport("rg:CaseFold", rg_dep.module("CaseFold"));
     utils_mod.addImport("rg:DisplayWidth", rg_dep.module("DisplayWidth"));
-
 
     const platform_mod = b.addModule("platform", .{
         .root_source_file = b.path("src/platform.zig"),
@@ -114,18 +112,16 @@ pub fn build(b: *std.Build) !void {
         .optimize = optimize,
     });
 
-
-
     Buffer_mod.addImport("platform", platform_mod);
 
-
+    common_mod.addImport("Buffer", Buffer_mod);
+    common_mod.addImport("Fingerprint", Fingerprint_mod);
     common_mod.addImport("Formatter", Formatter_mod);
     common_mod.addImport("Id", Id_mod);
     common_mod.addImport("Interner", Interner_mod);
     common_mod.addImport("Stack", Stack_mod);
-    common_mod.addImport("SlotMap", SlotMap_mod);
     common_mod.addImport("VirtualWriter", VirtualWriter_mod);
-
+    common_mod.addImport("SlotMap", SlotMap_mod);
 
     Formatter_mod.addImport("platform", platform_mod);
 

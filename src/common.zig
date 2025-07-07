@@ -10,7 +10,6 @@ pub const Stack = @import("Stack");
 pub const VirtualWriter = @import("VirtualWriter");
 pub const SlotMap = @import("SlotMap");
 
-
 pub const PeekableIteratorMode = union(enum) {
     error_type: type,
     direct_call: void,

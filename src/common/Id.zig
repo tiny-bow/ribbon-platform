@@ -9,15 +9,6 @@ test {
     std.testing.refAllDeclsRecursive(@This());
 }
 
-/// The maximum integer that can be converted to an `Id`.
-pub const MAX_INT = std.math.maxInt(u16) - 1;
-
-/// The default Id type constructor, 16 bits.
-/// This is used because we can pack 16 bits into a pointer on most architectures, among other things.
-pub fn of(comptime T: type) type {
-    return ofSize(T, 16);
-}
-
 /// Identity values used to create indirect references.
 ///
 /// Associated type may be accessed with the `Value` constant.
@@ -26,7 +17,7 @@ pub fn of(comptime T: type) type {
 /// incrementing integers when creating enums, and decrementing enums when creating integers.
 /// Therefore, despite the null id being zero, we can still index into arrays simply by calling `.toInt()`.
 /// Additionally, "null dereference" will be caught by safe-mode checks due to overflow.
-pub fn ofSize(comptime T: type, comptime bits: comptime_int) type {
+pub fn of(comptime T: type, comptime bits: comptime_int) type {
     const I = std.meta.Int(.unsigned, bits);
     return enum(I) {
         const Self = @This();
@@ -37,8 +28,11 @@ pub fn ofSize(comptime T: type, comptime bits: comptime_int) type {
         null = 0,
         _,
 
+        /// The maximum integer that can be converted to an `Id`.
+        pub const MAX_INT = std.math.maxInt(I) - 1;
+
         /// Convert between `Id` types.
-        pub fn cast(self: Self, comptime U: type) Id.ofSize(U, bits) {
+        pub fn cast(self: Self, comptime U: type) Id.of(U, bits) {
             return @enumFromInt(@intFromEnum(self));
         }
 
@@ -78,11 +72,10 @@ pub fn ofSize(comptime T: type, comptime bits: comptime_int) type {
     };
 }
 
-
 pub fn Table(comptime T: type, comptime id_size: comptime_int) type {
     return struct {
         const Self = @This();
-        pub const Id = ofSize(T, id_size);
+        pub const Id = of(T, id_size);
 
         data: pl.MultiArrayList(T) = .empty,
 
@@ -149,77 +142,6 @@ pub fn Table(comptime T: type, comptime id_size: comptime_int) type {
     };
 }
 
-/// This is a slice utilizing pointer-tagging to encode the length
-/// into 64 bits along with the base pointer.
-///
-/// This is possible because of two factors:
-/// + `Id`s are 16-bit, so a buffer referring to values identified by them
-/// could never be larger than `std.math.maxInt(u16)` elements.
-/// + Pointer values on our supported architectures only use 48-bits of their word,
-/// leaving us a super convenient space to store arbitrary data
-/// (assuming we decompose before using it as a pointer, see methods).
-pub fn Buffer(comptime T: type, comptime MUT: pl.Mutability) type {
-    // NOTE: the original description of this type said "assuming we mask it off"
-    // but actually, some platforms require you to sign-extend the 47th bit to 64 bits.
-    // The code remains unchanged, though, because zig handles this for us in @ptrFromInt.
-    return packed struct {
-        const Self = @This();
-
-        len: u16 = 0,
-        ptr: u48 = 0,
-
-        pub const PointerType: type = MUT.MultiPointerType(T);
-        pub const SliceType: type = MUT.SliceType(T);
-        pub const ValueType = T;
-
-        pub const empty = Self{
-            .len = 0,
-            .ptr = 0,
-        };
-
-        /// Create a buffer from a slice.
-        pub fn fromSlice(slice: SliceType) Self {
-            return fromPtr(slice.ptr, slice.len);
-        }
-
-        /// Create a buffer from a pointer and length.
-        pub fn fromPtr(ptr: PointerType, len: usize) Self {
-            const i = @intFromPtr(ptr);
-            std.debug.assert(i != 0);
-            std.debug.assert(i != 0xaaaa_aaaa_aaaa_aaaa);
-            return Self {
-                .len = @intCast(len),
-                .ptr = @intCast(i),
-            };
-        }
-
-        /// Extract the 48-bit address part of this buffer.
-        pub fn asPtr(self: Self) PointerType {
-            std.debug.assert(self.ptr != 0);
-            if (!std.mem.isAligned(self.ptr, @alignOf(T))) {
-                std.debug.panic("Buffer.asPtr: pointer {x} not aligned to {}", .{ self.ptr, @alignOf(T) });
-            }
-            return @ptrFromInt(self.ptr);
-        }
-
-        /// Extract both parts of this buffer and construct a slice.
-        pub fn asSlice(self: Self) SliceType {
-            if (self.ptr == 0 or self.len == 0) return &.{};
-
-            return self.asPtr()[0..self.len];
-        }
-
-        pub fn format(self: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-            if (comptime @typeInfo(PointerType).pointer.child == u8) {
-                try writer.print("\"{s}\"", .{self.asSlice()});
-            } else {
-                try writer.print("{any}", .{self.asSlice()});
-            }
-        }
-    };
-}
-
-
 /// `HashMap` specialized to types compatible with `IdHashCtx`.
 ///
 /// Default initialization of this struct is deprecated; use `.empty` instead.
@@ -246,7 +168,7 @@ pub fn Set(comptime T: type, comptime LOAD_PERCENTAGE: u64) type {
 /// See `std.meta.hasUniqueRepresentation`.
 pub fn HashCtx(comptime T: type) type {
     comptime {
-        if(!pl.hasDerefField(T, .id)) {
+        if (!pl.hasDerefField(T, .id)) {
             @compileError("IdHashCtx: type " ++ @typeName(T) ++ " requires a field named 'id'");
         }
 

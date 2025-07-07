@@ -1,4 +1,3 @@
-
 //! Byte writer for memory that requires stable addressing.
 //!
 //! Allocates a page-aligned `USABLE_ADDRESS_SPACE`-byte address space, but does not commit any pages until they are used.
@@ -25,7 +24,6 @@ test {
 /// may be using in the future, so that we can have a stable base pointer as we grow the memory,
 /// but we do not actually allocate any memory up front.
 pub const NO_PROTECTION = std.posix.PROT.NONE;
-
 
 /// The state of a page in the virtual address space acquired by an `VirtualWriter`, during and after writing, until finalization.
 pub const READ_WRITE = std.posix.PROT.READ | std.posix.PROT.WRITE;
@@ -121,10 +119,10 @@ pub fn new(comptime USABLE_ADDRESS_SPACE: comptime_int) type {
 
             self.cursor += pl.alignDelta(self.cursor, pl.PAGE_SIZE);
 
-            std.posix.munmap(@alignCast((self.memory.ptr + self.cursor)[0..self.memory.len - self.cursor]));
+            std.posix.munmap(@alignCast((self.memory.ptr + self.cursor)[0 .. self.memory.len - self.cursor]));
 
             std.posix.mprotect(out, @intFromEnum(access)) catch |err| {
-                std.debug.panic("mprotect rejected `{}`: {s}", .{@intFromEnum(access), @errorName(err)});
+                std.debug.panic("mprotect rejected `{}`: {s}", .{ @intFromEnum(access), @errorName(err) });
             };
 
             self.cursor = 0;
@@ -160,6 +158,33 @@ pub fn new(comptime USABLE_ADDRESS_SPACE: comptime_int) type {
             self.top += toCommit;
 
             return @alignCast(self.memory[self.cursor..self.top]);
+        }
+
+        /// Same as `std.mem.Allocator.create`, but allocates from the virtual address space of the writer.
+        pub fn create(self: *Self, comptime T: type) Error!*T {
+            return &(try self.alloc(T, 1))[0];
+        }
+
+        /// Same as `std.mem.Allocator.alloc`, but allocates from the virtual address space of the writer.
+        pub fn alloc(self: *Self, comptime T: type, len: usize) Error![]T {
+            const byte_len = len * @sizeOf(T);
+            const padding = pl.alignDelta(self.getCurrentAddress(), @alignOf(T));
+            const total_size = byte_len + padding;
+
+            var avail = self.availableCapacity();
+            while (avail.len < total_size) avail = try self.nextPage();
+
+            const bytes = avail[padding..total_size];
+            self.cursor += bytes.len;
+
+            return @alignCast(@ptrCast(bytes));
+        }
+
+        /// Same as `std.mem.Allocator.dupe`, but copies a slice into the virtual address space of the writer.
+        pub fn dupe(self: *Self, comptime T: type, slice: []const T) Error![]T {
+            const dest = try self.alloc(T, slice.len);
+            @memcpy(dest, slice);
+            return dest;
         }
 
         /// Writes as much of a slice of bytes to the writer as will fit without an allocation.
@@ -206,8 +231,9 @@ pub fn new(comptime USABLE_ADDRESS_SPACE: comptime_int) type {
         /// Writes an integer to the writer.
         pub fn writeInt(
             self: *Self,
-            comptime T: type, value: T,
-            comptime _: enum {little}, // allows backward compat with writer code in r64; but only in provably compatible use-cases
+            comptime T: type,
+            value: T,
+            comptime _: enum { little }, // allows backward compat with writer code in r64; but only in provably compatible use-cases
         ) Error!void {
             // We do not encode abi padding bytes here; only get the bytes that are actually used.
             const bytes = std.mem.asBytes(&value)[0..pl.bytesFromBits(@bitSizeOf(T))];

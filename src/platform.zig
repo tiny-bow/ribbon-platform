@@ -61,6 +61,15 @@ pub const MAX_REGISTERS = 255;
 /// The maximum number of unique effect types within a ribbon runtime instance.
 pub const MAX_EFFECT_TYPES = std.math.maxInt(u16);
 
+// The number of bits used for symbolic identity of module level values.
+pub const STATIC_ID_BITS = bitsFromBytes(STATIC_ID_BYTES);
+/// The number of bytes used for symbolic identity of module level values.
+pub const STATIC_ID_BYTES = 4;
+/// The number of bits used for symbolic identity of local values.
+pub const LOCAL_ID_BITS = bitsFromBytes(LOCAL_ID_BYTES);
+/// The number of bytes used for symbolic identity of local values.
+pub const LOCAL_ID_BYTES = 1;
+
 /// The maximum alignment value.
 pub const MAX_ALIGNMENT = 4096;
 
