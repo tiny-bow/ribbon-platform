@@ -34,7 +34,7 @@ test {
 pub const VERSION = build_info.version;
 
 /// The fingerprint of the build that produced this module.
-pub const BUILD_FINGERPRINT = Fingerprint { .value = build_info.raw_fingerprint };
+pub const BUILD_FINGERPRINT = Fingerprint{ .value = build_info.raw_fingerprint };
 
 /// The size of a virtual opcode, in bytes.
 pub const OPCODE_SIZE = 2;
@@ -75,7 +75,8 @@ pub const ABI: Abi = if (@import("builtin").os.tag == .windows) .win else .sys_v
 
 /// Description of the C ABI used by the current hardware.
 pub const Abi = enum {
-    sys_v, win,
+    sys_v,
+    win,
 
     /// The number of registers used for passing arguments under this Abi.
     pub fn argumentRegisterCount(self: Abi) usize {
@@ -116,7 +117,9 @@ pub fn callForeign(fnPtr: *const anyopaque, args: []const usize) usize {
 
 /// Whether runtime safety checks are enabled.
 pub const RUNTIME_SAFETY: bool = switch (@import("builtin").mode) {
-    .Debug, .ReleaseSafe, => true,
+    .Debug,
+    .ReleaseSafe,
+    => true,
     .ReleaseFast, .ReleaseSmall => false,
 };
 
@@ -129,12 +132,11 @@ comptime {
     }
 }
 
-
 /// Utf-32 codepoint (`u21`).
 pub const Char: type = u21;
 
 /// The type of constant virtual memory regions allocated with posix.
-pub const VirtualMemory = []const align(std.heap.page_size_min) u8;
+pub const VirtualMemory = []align(std.heap.page_size_min) const u8;
 
 /// The type of mutable virtual memory regions allocated with posix.
 pub const MutVirtualMemory = []align(std.heap.page_size_min) u8;
@@ -227,7 +229,6 @@ pub const Mutability = enum(u1) {
     }
 };
 
-
 pub fn UniqueReprMap(comptime K: type, comptime V: type, LOAD_PERCENTAGE: u64) type {
     return HashMap(K, V, UniqueReprHashContext64(K), LOAD_PERCENTAGE);
 }
@@ -276,8 +277,6 @@ pub fn UniqueReprHashContext64(comptime T: type) type {
     };
 }
 
-
-
 /// Returns an enum with a variant named after each field of `T`.
 pub fn FieldEnumOfSize(comptime T: type, comptime bit_size: comptime_int) type {
     const field_infos = std.meta.fields(T);
@@ -324,7 +323,6 @@ pub fn FieldEnumOfSize(comptime T: type, comptime bit_size: comptime_int) type {
         },
     });
 }
-
 
 /// Represents the alignment of a value type; the max alignment is the minimum page size supported.
 ///
@@ -396,7 +394,6 @@ pub fn offsetPointer(ptr: anytype, offset: anytype) @TypeOf(ptr) {
 /// Represents the bit size of an integer type; we allow arbitrary bit-width integers, from 0 up to the max `Alignment`.
 pub const IntegerBitSize: type = std.math.IntFittingRange(0, MAX_ALIGNMENT);
 
-
 /// * If the input type is a `comptime_int` or `comptime_float`: returns `comptime_float`.
 /// * Otherwise:
 ///     + if the input type is >= 64 bits in size: returns `f64`.
@@ -404,9 +401,7 @@ pub const IntegerBitSize: type = std.math.IntFittingRange(0, MAX_ALIGNMENT);
 pub fn FloatOrDouble(comptime T: type) type {
     comptime return switch (T) {
         comptime_int, comptime_float => comptime_float,
-        else =>
-            if (@bitSizeOf(T) <= 32) f32
-            else f64,
+        else => if (@bitSizeOf(T) <= 32) f32 else f64,
     };
 }
 
@@ -647,22 +642,6 @@ pub fn hash128(data: []const u8) u128 {
     hasher.update(data);
     return hasher.final();
 }
-
-
-/// Represents a type ID.
-pub const TypeId = packed struct {
-    /// The type name.
-    value: ?[*:0]const u8,
-
-    pub fn of(comptime T: type) TypeId {
-        const static = struct { const value = @typeName(T); };
-        return .{.value = static.value };
-    }
-
-    pub fn typename(self: TypeId) ?[*:0]const u8 {
-        return self.value;
-    }
-};
 
 /// Determines whether a type can have declarations.
 pub inline fn canHaveDecls(comptime T: type) bool {
@@ -919,6 +898,83 @@ pub fn expectsPointerAtArgumentN(comptime F: type, comptime index: usize, compti
     }
 }
 
+/// A type id, which is a unique identifier for a *Zig* type.
+pub const TypeId = packed struct {
+    ptr: [*:0]const u8,
+
+    /// Create a type id from a comptime-known Zig type.
+    pub fn of(comptime T: type) TypeId {
+        return .{ .ptr = @typeName(T) };
+    }
+
+    /// Determine if a type id is the id of a specific type.
+    pub fn is(self: TypeId, comptime T: type) bool {
+        return self.ptr == @typeName(T);
+    }
+};
+
+/// A type-erased pointer to any type, used for binding arbitrary data in user-defined nodes.
+/// * Does not imply ownership of the type-erased value.
+pub const Any = packed struct {
+    /// The type id of the value stored in this `Any`.
+    type_id: TypeId,
+    /// The pointer to the value stored in this `Any`.
+    ptr: *anyopaque,
+
+    /// Create an `Any` from a pointer of any type.
+    /// * The type must be a pointer type, otherwise this will fail at compile time.
+    pub fn from(value: anytype) Any {
+        const T = comptime @TypeOf(value);
+
+        if (comptime @typeInfo(T) != .pointer) {
+            @compileError(@typeName(T) ++ " is not a pointer type, cannot be used with Any");
+        }
+
+        return .{
+            .type_id = TypeId.of(T),
+            .ptr = @ptrCast(value),
+        };
+    }
+
+    /// Convert this `Any` to a pointer of type `T`, if the type matches.
+    /// * The type must be a pointer type, otherwise this will fail at compile time.
+    pub fn to(self: Any, comptime T: type) ?*T {
+        if (TypeId.of(T).ptr != self.type_id.ptr) return null;
+
+        return @alignCast(@ptrCast(self.ptr));
+    }
+
+    /// Convert this `Any` to a pointer of type `T`. Only checks the type id in safe modes.
+    /// * The type must be a pointer type, otherwise this will fail at compile time.
+    pub fn force(self: Any, comptime T: type) *T {
+        if (comptime RUNTIME_SAFETY) {
+            if (TypeId.of(T).ptr != self.type_id.ptr) {
+                @compileError("Cannot convert Any to " ++ @typeName(T) ++ ", type mismatch");
+            }
+        }
+
+        return @alignCast(@ptrCast(self.ptr));
+    }
+};
+
+pub fn enumFieldArray(comptime T: type) [@typeInfo(T).@"enum".fields.len]std.meta.Tag(T) {
+    comptime {
+        const field_names = std.meta.fieldNames(T);
+        var field_values = [1]std.meta.Tag(T){undefined} ** field_names.len;
+
+        for (field_names, 0..) |field, i| {
+            field_values[i] = @intFromEnum(@field(T, field));
+        }
+
+        return field_values;
+    }
+}
+
+pub fn isEnumVariant(comptime T: type, value: anytype) bool {
+    const field_values = comptime enumFieldArray(T);
+
+    return std.mem.indexOfScalar(std.meta.Tag(T), &field_values, value) != null;
+}
 
 pub fn stream(reader: anytype, writer: anytype) !void {
     while (true) {
@@ -943,35 +999,35 @@ pub const SnapshotTestName = union(enum) {
 };
 
 /// Run a suite of input/output tests.
-pub fn snapshotTest(comptime test_name: SnapshotTestName, comptime test_func: fn (input: []const u8, expect: []const u8) anyerror!void, comptime tests: []const struct {input: []const u8, expect: anyerror![]const u8}) !void {
+pub fn snapshotTest(comptime test_name: SnapshotTestName, comptime test_func: fn (input: []const u8, expect: []const u8) anyerror!void, comptime tests: []const struct { input: []const u8, expect: anyerror![]const u8 }) !void {
     var failures = std.ArrayList(usize).init(std.heap.page_allocator);
     defer failures.deinit();
 
     testing: for (tests, 0..) |t, i| {
-        log.info("test {}/{}", .{i, tests.len});
+        log.info("test {}/{}", .{ i, tests.len });
         const input = t.input;
 
         if (t.expect) |expect_str| {
             test_func(input, expect_str) catch |err| {
-                log.err("input {s} failed: {}", .{input, err});
+                log.err("input {s} failed: {}", .{ input, err });
                 failures.append(i) catch unreachable;
                 continue :testing;
             };
 
-            log.info("input {s} succeeded: {s}", .{input, expect_str});
+            log.info("input {s} succeeded: {s}", .{ input, expect_str });
         } else |expect_err| {
             std.debug.assert(expect_err != error.TestFailure);
 
             const maybe_err = test_func(input, "");
             if (maybe_err) |_| { // void
-                log.err("input {s} succeeded; but expected {}", .{input, expect_err});
+                log.err("input {s} succeeded; but expected {}", .{ input, expect_err });
                 failures.append(i) catch unreachable;
             } else |err| {
                 if (err == error.TestFailure or err == error.TestExpectedEqual) {
-                    log.err("input {s} succeeded, but the output was wrong; expected {}", .{input, expect_err});
+                    log.err("input {s} succeeded, but the output was wrong; expected {}", .{ input, expect_err });
                     failures.append(i) catch unreachable;
                 } else if (expect_err != err) {
-                    log.err("input {s} failed: {}; but expected {}", .{input, err, expect_err});
+                    log.err("input {s} failed: {}; but expected {}", .{ input, err, expect_err });
                     failures.append(i) catch unreachable;
                 } else {
                     log.info("input {s} failed as expected", .{input});
@@ -981,7 +1037,7 @@ pub fn snapshotTest(comptime test_name: SnapshotTestName, comptime test_func: fn
     }
 
     if (failures.items.len > 0) {
-        log.err("Failed {}/{} tests: {any}", .{failures.items.len, tests.len, failures.items});
+        log.err("Failed {}/{} tests: {any}", .{ failures.items.len, tests.len, failures.items });
         return error.TestFailed;
     } else {
         switch (test_name) {
@@ -1077,7 +1133,7 @@ pub inline fn BiMap(comptime A: type, comptime B: type, comptime A_Ctx: type, co
             pub fn next(self: *Iterator) ?Entry {
                 const elem = self.inner.next() orelse return null;
 
-                return Entry {
+                return Entry{
                     .a = elem.key_ptr.*,
                     .b = elem.value_ptr.*,
                 };
@@ -1106,7 +1162,7 @@ pub fn UniqueReprBiMap(comptime A: type, comptime B: type, comptime style: MapSt
             const self = try allocator.create(Self);
             errdefer allocator.destroy(self);
 
-            self.* = Self {
+            self.* = Self{
                 .a_to_b = Map(A, B, 80),
                 .b_to_a = Map(B, A, 80),
             };
@@ -1183,7 +1239,7 @@ pub fn UniqueReprBiMap(comptime A: type, comptime B: type, comptime style: MapSt
             pub fn next(self: *Iterator) ?Entry {
                 const elem = self.inner.next() orelse return null;
 
-                return Entry {
+                return Entry{
                     .a = elem.key_ptr.*,
                     .b = elem.value_ptr.*,
                 };
@@ -1191,8 +1247,6 @@ pub fn UniqueReprBiMap(comptime A: type, comptime B: type, comptime style: MapSt
         };
     };
 }
-
-
 
 pub fn Visitor(comptime T: type) type {
     return struct {
