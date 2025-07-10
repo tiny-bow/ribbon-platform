@@ -68,7 +68,7 @@ pub const STATIC_ID_BYTES = 4;
 /// The number of bits used for symbolic identity of local values.
 pub const LOCAL_ID_BITS = bitsFromBytes(LOCAL_ID_BYTES);
 /// The number of bytes used for symbolic identity of local values.
-pub const LOCAL_ID_BYTES = 1;
+pub const LOCAL_ID_BYTES = 2;
 
 /// The maximum alignment value.
 pub const MAX_ALIGNMENT = 4096;
@@ -238,6 +238,37 @@ pub const Mutability = enum(u1) {
     }
 };
 
+pub fn WithoutFields(comptime T: type, comptime DROPPED: []const []const u8) type {
+    comptime {
+        const old_fields = std.meta.fields(T);
+        const Field = @TypeOf(old_fields[0]);
+
+        var new_fields = [1]Field{undefined} ** old_fields.len;
+
+        var i = 0;
+
+        for (old_fields) |old_field| {
+            if (for (DROPPED) |x| {
+                if (std.mem.eql(u8, old_field.name, x)) break true;
+            } else false) continue;
+            new_fields[i] = old_field;
+            i += 1;
+        }
+
+        var info = @typeInfo(T);
+
+        switch (info) {
+            .@"struct" => |*x| x.fields = new_fields[0..i],
+            .@"union" => |*x| x.fields = new_fields[0..i],
+            .@"enum" => |*x| x.fields = new_fields[0..i],
+            .error_set => |*x| x.* = new_fields[0..i],
+            else => unreachable,
+        }
+
+        return @Type(info);
+    }
+}
+
 pub fn UniqueReprMap(comptime K: type, comptime V: type, LOAD_PERCENTAGE: u64) type {
     return HashMap(K, V, UniqueReprHashContext64(K), LOAD_PERCENTAGE);
 }
@@ -390,14 +421,14 @@ pub fn alignDelta(address: anytype, alignment: anytype) AlignOutput(@TypeOf(alig
     return integerToUnknownAddressType(AlignOutput(@TypeOf(alignment)), off);
 }
 
-/// Applies an offset to a pointer
-/// * preserves pointer attributes
-/// * offset may be a signed or unsigned integer; it is bitcast before addition
-/// * offset must be multiplied by pointee-size before calling this function
-pub fn offsetPointer(ptr: anytype, offset: anytype) @TypeOf(ptr) {
-    const addr = integerFromUnknownAddressType(ptr);
-    const off = integerFromUnknownAddressType(offset);
-    return integerToUnknownAddressType(@TypeOf(ptr), addr + off);
+// This function safely applies a signed element offset to a pointer.
+pub fn offsetPointerElement(ptr: anytype, offset: isize) @TypeOf(ptr) {
+    return @ptrFromInt(@as(usize, @bitCast(@as(isize, @bitCast(@intFromPtr(ptr))) + offset * @sizeOf(@typeInfo(@TypeOf(ptr)).pointer.child))));
+}
+
+// This function safely applies a signed byte offset to a pointer.
+pub fn offsetPointer(ptr: anytype, offset: isize) @TypeOf(ptr) {
+    return @ptrFromInt(@as(usize, @bitCast(@as(isize, @bitCast(@intFromPtr(ptr))) + offset)));
 }
 
 /// Represents the bit size of an integer type; we allow arbitrary bit-width integers, from 0 up to the max `Alignment`.
@@ -1286,6 +1317,59 @@ pub fn Visitor(comptime T: type) type {
         pub fn visit(self: *Self, value: T) !bool {
             const value_gop = try self.visited_values.getOrPut(self.allocator, value);
             return value_gop.found_existing;
+        }
+    };
+}
+
+/// Utility for queueing and unqueuing items.
+/// * Not suitable for concurrent use.
+/// * Not suitable for large or managed data structures.
+pub fn VisitorQueue(comptime T: type) type {
+    return struct {
+        const Self = @This();
+
+        allocator: std.mem.Allocator,
+        to_visit: ArrayList(T) = .{},
+        visited: u64 = 0,
+
+        /// Create a new visitor queue.
+        pub fn init(allocator: std.mem.Allocator) Self {
+            return Self{ .allocator = allocator };
+        }
+
+        /// Erase the items in the queue and reset the visited count.
+        /// Retains the capacity of the queue.
+        pub fn clear(self: *Self) void {
+            self.to_visit.clearRetainingCapacity();
+            self.visited = 0;
+        }
+
+        /// Deinitialize the visitor queue, freeing any allocated memory.
+        /// * This leaves the queue in a safe default state, with no items to visit.
+        pub fn deinit(self: *Self) void {
+            self.to_visit.deinit(self.allocator);
+            self.to_visit = .{};
+            self.visited = 0;
+        }
+
+        /// Add an item to the queue.
+        pub fn add(self: *Self, elem: T) error{OutOfMemory}!void {
+            for (self.to_visit.items) |id| {
+                if (id == elem) return;
+            }
+
+            try self.to_visit.append(self.allocator, elem);
+        }
+
+        /// Get the next item to visit.
+        pub fn visit(self: *Self) ?T {
+            if (self.visited >= self.to_visit.items.len) return null;
+
+            const elem = self.to_visit.items[self.visited];
+
+            self.visited += 1;
+
+            return elem;
         }
     };
 }

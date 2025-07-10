@@ -33,6 +33,11 @@ pub fn of(comptime T: type, comptime bits: comptime_int) type {
 
         /// Convert between `Id` types.
         pub fn cast(self: Self, comptime U: type) Id.of(U, bits) {
+            return self.bitcast(U, bits);
+        }
+
+        /// Convert between `Id` types of different sizes.
+        pub fn bitcast(self: Self, comptime U: type, comptime new_bits: comptime_int) Id.of(U, new_bits) {
             return @enumFromInt(@intFromEnum(self));
         }
 

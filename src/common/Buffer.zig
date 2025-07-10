@@ -126,3 +126,60 @@ pub fn short(comptime T: type, comptime MUT: pl.Mutability) type {
         }
     };
 }
+
+/// This is a fixed-length extern buffer with a variable-length state element and slicing methods. IE, smallvec or similar. Mutation is manual for now.
+pub fn fixed(comptime T: type, comptime CAPACITY: comptime_int) type {
+    return extern struct {
+        const Self = @This();
+
+        len: u64 = 0,
+        val: [CAPACITY]T = [1]T{undefined} ** CAPACITY,
+
+        pub const ValueType = T;
+
+        pub const empty = Self{};
+
+        /// Copy a buffer from a slice.
+        pub fn fromSlice(slice: []const T) Self {
+            var out = Self{ .len = @intCast(slice.len) };
+
+            @memcpy(out.asMutSlice(), slice);
+
+            return out;
+        }
+
+        /// Copy a buffer from a pointer and length.
+        pub fn fromPtr(ptr: *const T, len: usize) Self {
+            return Self.fromSlice(ptr[0..len]);
+        }
+
+        /// Get a pointer to the data portion of this buffer.
+        pub fn asPtr(self: *const Self) [*]const T {
+            return @ptrCast(&self.val);
+        }
+
+        /// Get a mutable pointer to the data portion of this buffer.
+        pub fn asMutPtr(self: *Self) [*]T {
+            return @ptrCast(&self.val);
+        }
+
+        /// Get a slice of this buffer's active data portion.
+        pub fn asSlice(self: *const Self) []const T {
+            return self.asPtr()[0..self.len];
+        }
+
+        /// Get a mutable slice of this buffer's active data portion.
+        pub fn asMutSlice(self: *Self) []T {
+            return self.asMutPtr()[0..self.len];
+        }
+
+        /// `std.fmt` impl
+        pub fn format(self: Self, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            if (comptime T == u8) {
+                try writer.print("\"{s}\"", .{self.asSlice()});
+            } else {
+                try writer.print("{any}", .{self.asSlice()});
+            }
+        }
+    };
+}

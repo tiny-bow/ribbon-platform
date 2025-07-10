@@ -7,6 +7,7 @@ pub const Formatter = @import("Formatter");
 pub const Id = @import("Id");
 pub const Interner = @import("Interner");
 pub const Stack = @import("Stack");
+pub const AllocWriter = @import("AllocWriter");
 pub const VirtualWriter = @import("VirtualWriter");
 pub const SlotMap = @import("SlotMap");
 
