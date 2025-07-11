@@ -1023,6 +1023,19 @@ pub fn stream(reader: anytype, writer: anytype) !void {
     }
 }
 
+/// Similar to `std.mem.indexOf`, but for slices of slices.
+pub fn indexOfBuf(comptime T: type, haystack: []const []const T, needle: []const T) ?usize {
+    if (needle.len == 0) return 0;
+
+    for (haystack, 0..) |h, i| {
+        if (std.mem.eql(T, h, needle)) {
+            return i;
+        }
+    }
+
+    return null;
+}
+
 /// See `snapshotTest` for usage.
 pub const SnapshotTestName = union(enum) {
     none: void,
