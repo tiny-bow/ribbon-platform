@@ -909,6 +909,16 @@ pub fn ExtrapolateErrorUnion(comptime E: type, comptime T: type) type {
     };
 }
 
+/// Extrapolates an error union type.
+pub fn ExtrapolatePointer(comptime P: type, comptime C: type) type {
+    var P_info = @typeInfo(P);
+
+    P_info.pointer.child = C;
+    P_info.pointer.size = .one;
+
+    return @Type(P_info);
+}
+
 /// Determines whether a function returns errors.
 pub fn returnsErrors(comptime F: type) bool {
     comptime {
@@ -1308,15 +1318,11 @@ pub fn Visitor(comptime T: type) type {
         allocator: std.mem.Allocator,
         visited_values: UniqueReprSet(T, 80),
 
-        pub fn init(allocator: std.mem.Allocator) error{OutOfMemory}!Self {
-            var self = Self{
+        pub fn init(allocator: std.mem.Allocator) Self {
+            return Self{
                 .allocator = allocator,
                 .visited_values = .empty,
             };
-
-            try self.visited_values.ensureTotalCapacity(allocator, 256);
-
-            return self;
         }
 
         pub fn deinit(self: *Self) void {

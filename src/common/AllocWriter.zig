@@ -56,6 +56,29 @@ pub const RelativeBuffer = struct {
 pub const RelativeAddress = enum(u64) {
     _,
 
+    pub const base: RelativeAddress = @enumFromInt(0);
+
+    /// Apply a byte offset to a relative address, yielding a new one.
+    pub fn applyOffset(self: RelativeAddress, offset: i64) RelativeAddress {
+        return @enumFromInt(@as(u64, @bitCast(@as(i64, @bitCast(self.toInt())) + offset)));
+    }
+
+    /// Create a new relative address from an integer value.
+    pub fn fromInt(value: anytype) RelativeAddress {
+        return @enumFromInt(value);
+    }
+
+    /// Create a new relative address from a base pointer and an element pointer.
+    pub fn fromPtr(buf: []align(pl.PAGE_SIZE) u8, ptr: anytype) RelativeAddress {
+        const p = @intFromPtr(ptr);
+        const a = @intFromPtr(buf.ptr);
+        const b = a + buf.len;
+
+        std.debug.assert(p >= a and p <= b);
+
+        return @enumFromInt(p - a);
+    }
+
     /// Determine if a relative address is the base address of its memory region.
     pub fn isBase(self: RelativeAddress) bool {
         return @intFromEnum(self) == 0;
@@ -63,56 +86,48 @@ pub const RelativeAddress = enum(u64) {
 
     /// Determine if a relative address is the end address (base + len) of its memory region.
     pub fn isSentinel(self: RelativeAddress, memory: []align(pl.PAGE_SIZE) u8) bool {
-        const p = @intFromEnum(self);
-        const a = @intFromPtr(memory.ptr);
-        const b = a + memory.len;
-        return p == b;
+        return self.toInt() == memory.len;
     }
 
     /// Validate that a relative address is within the bounds of a memory region.
     pub fn isValue(self: RelativeAddress, memory: []align(pl.PAGE_SIZE) u8) bool {
-        const p = @intFromEnum(self);
-        const a = @intFromPtr(memory.ptr);
-        const b = a + memory.len;
-        return p >= a and p < b;
+        return self.toInt() < memory.len;
     }
 
     /// Validate that a relative address is within the bounds of a memory region, or is the sentinel address.
     pub fn isValueOrSentinel(self: RelativeAddress, memory: []align(pl.PAGE_SIZE) u8) bool {
-        const p = @intFromEnum(self);
-        const a = @intFromPtr(memory.ptr);
-        const b = a + memory.len;
-        return (p >= a and p < b) or p == b;
+        return self.toInt() <= memory.len;
+    }
+
+    /// Get the integer value of the relative address.
+    pub fn toInt(self: RelativeAddress) u64 {
+        return @intFromEnum(self);
     }
 
     /// Resolve a relative address to an absolute pointer given a base memory region.
-    pub fn toPtr(self: RelativeAddress, base: []align(pl.PAGE_SIZE) u8) [*]u8 {
+    pub fn toPtr(self: RelativeAddress, buf: []align(pl.PAGE_SIZE) u8) [*]u8 {
         // Use zig safe mode bounds check instead of offseting base.ptr
-        return @ptrCast(&base[@intFromEnum(self)]);
+        return @ptrCast(&buf[@intFromEnum(self)]);
     }
 
     /// Resolve a relative address to an absolute pointer given a base memory region.
     /// * This cannot perform type checking, it is a low-level operation.
     /// * Runtime align check is performed in safe modes.
-    pub fn toTypedPtr(self: RelativeAddress, comptime T: type, base: []align(pl.PAGE_SIZE) u8) T {
+    pub fn toTypedPtr(self: RelativeAddress, comptime T: type, buf: []align(pl.PAGE_SIZE) u8) T {
         // Use zig safe mode bounds check instead of offseting base.ptr
-        return @alignCast(@ptrCast(&base[@intFromEnum(self)]));
+        return @alignCast(@ptrCast(&buf[@intFromEnum(self)]));
     }
 
     /// Resolve a relative address to an absolute pointer given a base memory region.
     /// * Unlike `toPtr`, this allows sentinel pointer resolution.
-    pub fn toPtrOrSentinel(self: RelativeAddress, base: []align(pl.PAGE_SIZE) u8) [*]u8 {
-        if (self.isSentinel(base)) {
-            return base.ptr + base.len;
-        } else {
-            return self.toPtr(base);
-        }
+    pub fn toPtrOrSentinel(self: RelativeAddress, buf: []align(pl.PAGE_SIZE) u8) [*]u8 {
+        return buf.ptr + self.toInt();
     }
 
     /// Try to resolve a relative address to an absolute pointer given a base memory region.
-    pub fn tryToPtr(self: RelativeAddress, base: []align(pl.PAGE_SIZE) u8) ?[*]u8 {
-        if (self.isValue(base)) {
-            return self.toPtr(base);
+    pub fn tryToPtr(self: RelativeAddress, buf: []align(pl.PAGE_SIZE) u8) ?[*]u8 {
+        if (self.isValue(buf)) {
+            return self.toPtr(buf);
         } else {
             return null;
         }
@@ -120,17 +135,12 @@ pub const RelativeAddress = enum(u64) {
 
     /// Try to resolve a relative address to an absolute pointer given a base memory region.
     /// * Unlike `tryToPtr`, this allows sentinel pointer resolution.
-    pub fn tryToPtrOrSentinel(self: RelativeAddress, base: []align(pl.PAGE_SIZE) u8) ?[*]u8 {
-        if (self.isValueOrSentinel(base)) {
-            return self.toPtrOrSentinel(base);
+    pub fn tryToPtrOrSentinel(self: RelativeAddress, buf: []align(pl.PAGE_SIZE) u8) ?[*]u8 {
+        if (self.isValueOrSentinel(buf)) {
+            return self.toPtrOrSentinel(buf);
         } else {
             return null;
         }
-    }
-
-    /// Apply a byte offset to a relative address, yielding a new one.
-    pub fn applyOffset(self: RelativeAddress, offset: i64) RelativeAddress {
-        return @enumFromInt(@as(u64, @bitCast(@as(i64, @bitCast(@as(u64, @intFromEnum(self)))) + offset)));
     }
 };
 
@@ -169,35 +179,38 @@ pub fn getWrittenSize(self: *AllocWriter) u64 {
 }
 
 /// Returns the size of the region of allocated of memory that is unused.
-pub fn getAvailableCapacity(self: *AllocWriter) u64 {
+pub fn getAvailableCapacity(self: *const AllocWriter) u64 {
     return self.memory.len - self.cursor;
 }
 
 /// Get the current written region of the writer.
-pub fn getWrittenRegion(self: *AllocWriter) []align(pl.PAGE_SIZE) u8 {
+pub fn getWrittenRegion(self: *const AllocWriter) []align(pl.PAGE_SIZE) u8 {
     return self.memory[0..self.cursor];
 }
 
 /// Returns the region of memory that is allocated but has not been written to.
-pub fn getAvailableRegion(self: *AllocWriter) []u8 {
+pub fn getAvailableRegion(self: *const AllocWriter) []u8 {
     return self.memory[self.cursor..self.memory.len];
 }
 
 /// Returns the current address of the writer's cursor.
 /// * This address is not guaranteed to be stable throughout the write; use `getRelativeAddress` for stable references.
-pub fn getCurrentAddress(self: *AllocWriter) [*]u8 {
+pub fn getCurrentAddress(self: *const AllocWriter) [*]u8 {
     return self.memory.ptr + self.cursor;
 }
 
 /// Returns the current cursor position. See also `getCurrentAddress`.
 /// * This can be used to get an address into the final buffer after write completion.
-pub fn getRelativeAddress(self: *AllocWriter) RelativeAddress {
+pub fn getRelativeAddress(self: *const AllocWriter) RelativeAddress {
     return @enumFromInt(self.cursor);
 }
 
 /// Convert an unstable address in the writer, such as those acquired through `alloc`, into a stable relative address.
-pub fn addressToRelative(self: *AllocWriter, address: anytype) AllocWriter.RelativeAddress {
-    const p = @intFromPtr(address);
+pub fn addressToRelative(self: *const AllocWriter, address: anytype) AllocWriter.RelativeAddress {
+    const A = comptime @TypeOf(address);
+    const A_info = comptime @typeInfo(A);
+
+    const p = @intFromPtr(if (comptime A_info.pointer.size == .slice) address.ptr else address);
     const a = @intFromPtr(self.memory.ptr);
     const b = a + self.memory.len;
 
@@ -207,13 +220,13 @@ pub fn addressToRelative(self: *AllocWriter, address: anytype) AllocWriter.Relat
 }
 
 /// Convert a stable relative address in the writer into an unstable absolute address.
-pub fn relativeToAddress(self: *AllocWriter, relative: RelativeAddress) [*]u8 {
+pub fn relativeToAddress(self: *const AllocWriter, relative: RelativeAddress) [*]u8 {
     return relative.toPtr(self.memory);
 }
 
 /// Convert a stable relative address in the writer into an unstable, typed pointer.
-pub fn relativeToPointer(self: *AllocWriter, comptime T: type, relative: RelativeAddress) T {
-    return relative.toTypedPtr(self.memory);
+pub fn relativeToPointer(self: *const AllocWriter, comptime T: type, relative: RelativeAddress) T {
+    return relative.toTypedPtr(T, self.memory);
 }
 
 /// Finalizes the writer, returning the generated code as a byte slice,
@@ -295,7 +308,8 @@ pub fn alignedAlloc(self: *AllocWriter, alignment: pl.Alignment, len: usize) Err
 
 /// Same as `std.mem.Allocator.alloc`, but allocates from the address space of the writer.
 pub fn alloc(self: *AllocWriter, comptime T: type, len: usize) Error![]T {
-    return std.mem.bytesAsSlice(T, self.alignedAlloc(@alignOf(T), len * @sizeOf(T)));
+    const x = try self.alignedAlloc(@alignOf(T), len * @sizeOf(T));
+    return @alignCast(std.mem.bytesAsSlice(T, x));
 }
 
 /// Same as `alloc`, but returns a RelativeAddress instead of a pointer.
@@ -349,6 +363,8 @@ pub fn write(self: *AllocWriter, noalias bytes: []const u8) Error!usize {
     const len = @min(bytes.len, avail.len);
 
     @memcpy(avail[0..len], bytes[0..len]);
+
+    self.cursor += len;
 
     return len;
 }
